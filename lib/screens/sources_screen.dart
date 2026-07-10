@@ -6,50 +6,47 @@ import '../services/app_state.dart';
 
 class SourcesScreen extends StatefulWidget {
   const SourcesScreen({super.key});
-
   @override
   State<SourcesScreen> createState() => _SourcesScreenState();
 }
 
 class _SourcesScreenState extends State<SourcesScreen> {
-  List<SourceItem>? _remote;
-  String? _sha;
+  List<SourceItem> _list = [];
   bool _busy = false;
-  bool _loaded = false; // caricato almeno una volta
+  bool _loaded = false;
 
-  Future<void> _loadRemote(AppState state, {bool silent = false}) async {
-    if (!state.github.configured) return;
-    if (!silent) setState(() => _busy = true);
+  AppState get _state => context.read<AppState>();
+
+  // Ogni operazione di scrittura legge PRIMA lo SHA fresco,
+  // poi scrive — così il 409 non può mai verificarsi.
+  Future<void> _reload({bool showSpinner = true}) async {
+    if (!_state.github.configured) return;
+    if (showSpinner) setState(() => _busy = true);
     try {
-      final (list, sha) = await state.github.fetchSources(
-          state.owner, state.repo, state.branch);
-      if (mounted) setState(() { _remote = list; _sha = sha; _loaded = true; });
+      final (list, _) = await _state.github.fetchSources(
+          _state.owner, _state.repo, _state.branch);
+      if (mounted) setState(() { _list = list; _loaded = true; });
     } catch (e) {
-      _snack('Errore lettura sources.yaml: $e');
+      _snack('Errore lettura fonti: $e');
     } finally {
-      if (mounted && !silent) setState(() => _busy = false);
+      if (mounted && showSpinner) setState(() => _busy = false);
     }
   }
 
-  /// Salva e ricarica subito lo SHA aggiornato prima di restituire.
-  Future<void> _saveRemote(AppState state, String message) async {
-    if (_remote == null || _sha == null) return;
+  Future<void> _save(String message) async {
     setState(() => _busy = true);
     try {
-      await state.github.writeSources(
-          state.owner, state.repo, state.branch, _remote!, _sha!, message);
-      // Ricarica subito SHA e lista aggiornati
-      final (list, sha) = await state.github.fetchSources(
-          state.owner, state.repo, state.branch);
-      if (mounted) setState(() { _remote = list; _sha = sha; });
-      // Lancia scrape in background, non blocca la UI
-      state.github.triggerScrape(state.owner, state.repo, state.branch)
-          .catchError((_) {});
-      _snack('Salvato. Scrape avviato: eventi freschi tra ~1 minuto.');
+      // Legge SHA fresco ogni volta
+      final (_, sha) = await _state.github.fetchSources(
+          _state.owner, _state.repo, _state.branch);
+      await _state.github.writeSources(
+          _state.owner, _state.repo, _state.branch, _list, sha, message);
+      _state.github.triggerScrape(
+          _state.owner, _state.repo, _state.branch).catchError((_) {});
+      _snack('Salvato. Scrape avviato, eventi freschi tra ~1 min.');
     } catch (e) {
-      _snack('Errore: $e');
-      // In caso di errore ricarica comunque lo SHA
-      await _loadRemote(state, silent: true);
+      _snack('Errore salvataggio: $e');
+      await _reload(showSpinner: false);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -57,129 +54,168 @@ class _SourcesScreenState extends State<SourcesScreen> {
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 4)));
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 4)));
   }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final github = state.github.configured;
-    final list = _remote ?? [for (final s in state.sources) s];
+    final hasToken = state.github.configured;
+    // Se non abbiamo caricato dal repo, mostriamo la lista da events.json
+    final displayList = _loaded ? _list : state.sources;
 
     return Scaffold(
       body: ListView(
         children: [
-          _ConfigTile(onSaved: () => _loadRemote(state)),
-          // Bottone "Carica" visibile sempre se configurato e non ancora caricato
-          if (github && !_loaded)
+          // ── Config repo ──────────────────────────────────────────
+          _ConfigTile(onSaved: _reload),
+
+          // ── Pulsante carica/ricarica ─────────────────────────────
+          if (hasToken)
             ListTile(
               leading: _busy
-                  ? const SizedBox(
-                      width: 24, height: 24,
+                  ? const SizedBox(width: 24, height: 24,
                       child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.cloud_download),
-              title: const Text('Carica fonti dal repo'),
-              subtitle: const Text('Legge sources.yaml completo'),
-              onTap: _busy ? null : () => _loadRemote(state),
+                  : Icon(_loaded ? Icons.sync : Icons.cloud_download),
+              title: Text(_loaded ? 'Ricarica fonti dal repo' : 'Carica fonti dal repo'),
+              subtitle: _loaded ? null : const Text('Legge sources.yaml completo'),
+              onTap: _busy ? null : _reload,
             ),
-          // Bottone ricarica sempre visibile dopo il primo caricamento
-          if (github && _loaded)
-            ListTile(
-              leading: _busy
-                  ? const SizedBox(
-                      width: 24, height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.sync),
-              title: const Text('Ricarica fonti dal repo'),
-              onTap: _busy ? null : () => _loadRemote(state),
-            ),
+
+          // ── Titolo sezione ───────────────────────────────────────
           const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
             child: Text('FONTI',
-                style: TextStyle(
-                    fontSize: 12, letterSpacing: 1.5, color: Colors.white54)),
+                style: TextStyle(fontSize: 12, letterSpacing: 1.5, color: Colors.white54)),
           ),
-          if (list.isEmpty)
+
+          if (displayList.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text('Nessuna fonte. Configura il repo qui sopra.',
+              child: Text('Nessuna fonte. Configura il repo e carica le fonti.',
                   style: TextStyle(color: Colors.white54)),
             ),
-          for (final s in list)
+
+          // ── Lista fonti ──────────────────────────────────────────
+          for (final s in displayList)
             Dismissible(
               key: ValueKey(s.id),
-              direction: _remote != null
-                  ? DismissDirection.endToStart
-                  : DismissDirection.none,
+              direction: _loaded ? DismissDirection.endToStart : DismissDirection.none,
               background: Container(
-                color: Colors.red.withOpacity(.7),
+                color: Colors.red.withOpacity(.75),
                 alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 20),
-                child: const Icon(Icons.delete),
+                padding: const EdgeInsets.only(right: 24),
+                child: const Icon(Icons.delete, color: Colors.white),
               ),
               confirmDismiss: (_) => showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
                   title: Text('Eliminare "${s.name}"?'),
-                  content: const Text(
-                      'La fonte viene rimossa da sources.yaml sul repo.'),
                   actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(ctx, false),
+                    TextButton(onPressed: () => Navigator.pop(ctx, false),
                         child: const Text('Annulla')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
+                    FilledButton(onPressed: () => Navigator.pop(ctx, true),
                         child: const Text('Elimina')),
                   ],
                 ),
               ),
               onDismissed: (_) {
-                _remote!.removeWhere((x) => x.id == s.id);
-                _saveRemote(state, 'rimossa fonte ${s.id}');
+                setState(() => _list.removeWhere((x) => x.id == s.id));
+                _save('rimossa fonte ${s.id}');
               },
-              child: SwitchListTile(
+              child: ListTile(
+                leading: Switch(
+                  value: _loaded ? s.enabled : !state.disabledSourcesLocal.contains(s.id),
+                  onChanged: _busy ? null : (v) {
+                    if (_loaded) {
+                      setState(() => s.enabled = v);
+                      _save('${v ? "attivata" : "disattivata"} fonte ${s.id}');
+                    } else {
+                      state.toggleSourceLocal(s.id);
+                    }
+                  },
+                ),
                 title: Text(s.name),
                 subtitle: Text(
-                  _remote != null
-                      ? '${s.type} · ${s.url}'
-                      : (state.disabledSourcesLocal.contains(s.id)
-                          ? 'Nascosta nell\'app'
-                          : 'Visibile'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  _loaded ? '${s.type} · ${s.url}' : s.id,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
                 ),
-                value: _remote != null
-                    ? s.enabled
-                    : !state.disabledSourcesLocal.contains(s.id),
-                onChanged: _busy
-                    ? null
-                    : (v) {
-                        if (_remote != null) {
-                          // Aggiorna lo stato locale subito per feedback immediato
-                          setState(() => s.enabled = v);
-                          _saveRemote(state,
-                              '${v ? "attivata" : "disattivata"} fonte ${s.id}');
-                        } else {
-                          state.toggleSourceLocal(s.id);
-                        }
-                      },
+                trailing: _loaded
+                    ? IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: _busy ? null : () => _editDialog(s),
+                      )
+                    : null,
               ),
             ),
-          const SizedBox(height: 80),
+          const SizedBox(height: 100),
         ],
       ),
-      floatingActionButton: (_remote != null && !_busy)
+
+      // ── FAB sempre visibile se token configurato ─────────────────
+      floatingActionButton: hasToken
           ? FloatingActionButton.extended(
               icon: const Icon(Icons.add),
-              label: const Text('Fonte RSS'),
-              onPressed: () => _addDialog(state),
+              label: const Text('Nuova fonte RSS'),
+              onPressed: _busy ? null : _addDialog,
             )
           : null,
     );
   }
 
-  Future<void> _addDialog(AppState state) async {
+  // ── Dialog modifica fonte ────────────────────────────────────────
+  Future<void> _editDialog(SourceItem s) async {
+    final name = TextEditingController(text: s.name);
+    final url = TextEditingController(text: s.url);
+    String category = s.defaultCategory;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Modifica fonte'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: name,
+                decoration: const InputDecoration(labelText: 'Nome')),
+            TextField(controller: url,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(labelText: 'URL feed RSS')),
+            const SizedBox(height: 8),
+            StatefulBuilder(builder: (_, ss) =>
+              DropdownButtonFormField<String>(
+                value: category,
+                decoration: const InputDecoration(labelText: 'Categoria'),
+                items: [for (final c in categoryMeta.keys)
+                  DropdownMenuItem(value: c, child: Text(categoryLabel(c)))],
+                onChanged: (v) => ss(() => category = v ?? category),
+              ),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annulla')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Salva')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() {
+      s.name = name.text.trim();
+      s.url = url.text.trim();
+      s.defaultCategory = category;
+    });
+    await _save('modificata fonte ${s.id}');
+  }
+
+  // ── Dialog aggiungi fonte ────────────────────────────────────────
+  Future<void> _addDialog() async {
+    // Se non abbiamo ancora caricato le fonti, carichiamo prima
+    if (!_loaded) await _reload();
+
     final name = TextEditingController();
     final url = TextEditingController();
     String category = 'eventi';
@@ -189,130 +225,103 @@ class _SourcesScreenState extends State<SourcesScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Nuova fonte RSS'),
         content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: name,
-                  decoration: const InputDecoration(labelText: 'Nome')),
-              TextField(
-                  controller: url,
-                  keyboardType: TextInputType.url,
-                  decoration:
-                      const InputDecoration(labelText: 'URL del feed RSS')),
-              const SizedBox(height: 8),
-              StatefulBuilder(
-                builder: (_, setS) => DropdownButtonFormField<String>(
-                  value: category,
-                  decoration:
-                      const InputDecoration(labelText: 'Categoria di default'),
-                  items: [
-                    for (final c in categoryMeta.keys)
-                      DropdownMenuItem(
-                          value: c, child: Text(categoryLabel(c)))
-                  ],
-                  onChanged: (v) => setS(() => category = v ?? 'eventi'),
-                ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: name,
+                decoration: const InputDecoration(labelText: 'Nome')),
+            TextField(controller: url,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(labelText: 'URL feed RSS')),
+            const SizedBox(height: 8),
+            StatefulBuilder(builder: (_, ss) =>
+              DropdownButtonFormField<String>(
+                value: category,
+                decoration: const InputDecoration(labelText: 'Categoria'),
+                items: [for (final c in categoryMeta.keys)
+                  DropdownMenuItem(value: c, child: Text(categoryLabel(c)))],
+                onChanged: (v) => ss(() => category = v ?? category),
               ),
-            ],
-          ),
+            ),
+          ]),
         ),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Annulla')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true),
               child: const Text('Aggiungi')),
         ],
       ),
     );
+    if (ok != true || name.text.trim().isEmpty || url.text.trim().isEmpty) return;
 
-    if (ok != true || name.text.trim().isEmpty || url.text.trim().isEmpty) {
-      return;
-    }
-    final id = name.text
-        .trim()
-        .toLowerCase()
+    final baseId = name.text.trim().toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-    // Evita id duplicati
-    final finalId = _remote!.any((s) => s.id == id) ? '${id}_${DateTime.now().millisecondsSinceEpoch}' : id;
-    _remote!.add(SourceItem(
-      id: finalId,
-      name: name.text.trim(),
-      type: 'rss',
-      url: url.text.trim(),
-      defaultCategory: category,
-      enabled: true,
-    ));
-    await _saveRemote(state, 'aggiunta fonte $finalId');
+    final id = _list.any((s) => s.id == baseId)
+        ? '${baseId}_${DateTime.now().millisecondsSinceEpoch}'
+        : baseId;
+
+    setState(() => _list.add(SourceItem(
+      id: id, name: name.text.trim(), type: 'rss',
+      url: url.text.trim(), defaultCategory: category, enabled: true,
+    )));
+    await _save('aggiunta fonte $id');
   }
 }
 
-/// Configurazione repo + token.
+// ── Config repo + token ───────────────────────────────────────────────
 class _ConfigTile extends StatefulWidget {
   final VoidCallback onSaved;
   const _ConfigTile({required this.onSaved});
-
   @override
   State<_ConfigTile> createState() => _ConfigTileState();
 }
 
 class _ConfigTileState extends State<_ConfigTile> {
-  final _owner = TextEditingController();
-  final _repo = TextEditingController();
+  final _owner  = TextEditingController();
+  final _repo   = TextEditingController();
   final _branch = TextEditingController();
-  final _token = TextEditingController();
+  final _token  = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    final state = context.read<AppState>();
-    _owner.text = state.owner;
-    _repo.text = state.repo;
-    _branch.text = state.branch;
+    final s = context.read<AppState>();
+    _owner.text  = s.owner;
+    _repo.text   = s.repo;
+    _branch.text = s.branch;
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
+    final s = context.watch<AppState>();
     return ExpansionTile(
       leading: const Icon(Icons.settings),
       title: const Text('Repo GitHub'),
-      subtitle: Text(state.owner.isEmpty
+      subtitle: Text(s.owner.isEmpty
           ? 'Non configurato'
-          : '${state.owner}/${state.repo} · ${state.github.configured ? "token ok" : "senza token (solo lettura)"}'),
+          : '${s.owner}/${s.repo} · ${s.github.configured ? "token ok" : "senza token"}'),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       children: [
-        TextField(
-            controller: _owner,
-            decoration: const InputDecoration(labelText: 'Owner (utente)')),
-        TextField(
-            controller: _repo,
+        TextField(controller: _owner,
+            decoration: const InputDecoration(labelText: 'Owner')),
+        TextField(controller: _repo,
             decoration: const InputDecoration(labelText: 'Repository')),
-        TextField(
-            controller: _branch,
-            decoration:
-                const InputDecoration(labelText: 'Branch (default: main)')),
-        TextField(
-          controller: _token,
-          obscureText: true,
-          decoration: const InputDecoration(
-            labelText: 'Fine-grained PAT (opzionale)',
-            helperText: 'Permessi: Contents read/write + Actions write',
-          ),
-        ),
+        TextField(controller: _branch,
+            decoration: const InputDecoration(labelText: 'Branch (default: main)')),
+        TextField(controller: _token, obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Fine-grained PAT',
+              helperText: 'Contents read/write + Actions write',
+            )),
         const SizedBox(height: 12),
         FilledButton.icon(
           icon: const Icon(Icons.save),
           label: const Text('Salva configurazione'),
           onPressed: () async {
             if (_token.text.trim().isNotEmpty) {
-              await state.github.saveToken(_token.text);
+              await s.github.saveToken(_token.text);
               _token.clear();
             }
-            await state.saveRepoConfig(
-                _owner.text, _repo.text, _branch.text);
+            await s.saveRepoConfig(_owner.text, _repo.text, _branch.text);
             widget.onSaved();
           },
         ),
