@@ -1,0 +1,182 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../models/models.dart';
+import 'github_service.dart';
+
+class AppState extends ChangeNotifier {
+  // --- configurazione repo ---
+  String owner = '';
+  String repo = '';
+  String branch = 'main';
+
+  String get rawEventsUrl =>
+      'https://raw.githubusercontent.com/$owner/$repo/$branch/events.json';
+
+  final GithubService github = GithubService();
+
+  // --- dati ---
+  List<EventItem> events = [];
+  List<SourceItem> sources = [];
+  DateTime? generatedAt;
+  bool loading = false;
+  String? error;
+
+  // --- decisioni swipe ---
+  final Set<String> liked = {};
+  final Set<String> discarded = {};
+
+  // --- filtri ---
+  final Set<String> activeCategories = {}; // vuoto = tutte
+  final Set<String> disabledSourcesLocal = {}; // nascoste solo nell'app
+
+  static const _prefsKeys = (
+    liked: 'liked',
+    discarded: 'discarded',
+    hiddenSources: 'hidden_sources',
+    owner: 'gh_owner',
+    repo: 'gh_repo',
+    branch: 'gh_branch',
+    cache: 'events_cache',
+  );
+
+  Future<void> init() async {
+    final p = await SharedPreferences.getInstance();
+    liked.addAll(p.getStringList(_prefsKeys.liked) ?? []);
+    discarded.addAll(p.getStringList(_prefsKeys.discarded) ?? []);
+    disabledSourcesLocal.addAll(p.getStringList(_prefsKeys.hiddenSources) ?? []);
+    owner = p.getString(_prefsKeys.owner) ?? '';
+    repo = p.getString(_prefsKeys.repo) ?? '';
+    branch = p.getString(_prefsKeys.branch) ?? 'main';
+    await github.loadToken();
+    final cached = p.getString(_prefsKeys.cache);
+    if (cached != null) _applyPayload(jsonDecode(cached));
+    notifyListeners();
+    if (owner.isNotEmpty && repo.isNotEmpty) await refresh();
+  }
+
+  Future<void> saveRepoConfig(String o, String r, String b) async {
+    owner = o.trim();
+    repo = r.trim();
+    branch = b.trim().isEmpty ? 'main' : b.trim();
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_prefsKeys.owner, owner);
+    await p.setString(_prefsKeys.repo, repo);
+    await p.setString(_prefsKeys.branch, branch);
+    notifyListeners();
+    await refresh();
+  }
+
+  Future<void> refresh() async {
+    if (owner.isEmpty || repo.isEmpty) {
+      error = 'Configura il repo GitHub nella tab Fonti';
+      notifyListeners();
+      return;
+    }
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      final resp = await http.get(Uri.parse(rawEventsUrl));
+      if (resp.statusCode != 200) {
+        throw Exception('HTTP ${resp.statusCode} da events.json');
+      }
+      final payload = jsonDecode(utf8.decode(resp.bodyBytes));
+      _applyPayload(payload);
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_prefsKeys.cache, utf8.decode(resp.bodyBytes));
+    } catch (e) {
+      error = e.toString();
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  void _applyPayload(Map<String, dynamic> payload) {
+    events = [
+      for (final e in (payload['events'] as List? ?? []))
+        EventItem.fromJson(e as Map<String, dynamic>)
+    ];
+    sources = [
+      for (final s in (payload['sources'] as List? ?? []))
+        SourceItem(
+          id: s['id'],
+          name: s['name'] ?? s['id'],
+          enabled: s['enabled'] ?? true,
+        )
+    ];
+    generatedAt = DateTime.tryParse(payload['generated_at'] ?? '');
+  }
+
+  // ------- viste filtrate -------
+  bool _visible(EventItem e) {
+    if (disabledSourcesLocal.contains(e.sourceId)) return false;
+    if (activeCategories.isNotEmpty && !activeCategories.contains(e.category)) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Mazzo di carte: visibili e non ancora decisi.
+  List<EventItem> get deck => [
+        for (final e in events)
+          if (_visible(e) && !liked.contains(e.id) && !discarded.contains(e.id))
+            e
+      ];
+
+  List<EventItem> get likedEvents =>
+      [for (final e in events) if (liked.contains(e.id)) e];
+
+  List<EventItem> eventsOn(DateTime day, {bool onlyLiked = false}) => [
+        for (final e in events)
+          if (e.start != null &&
+              e.start!.year == day.year &&
+              e.start!.month == day.month &&
+              e.start!.day == day.day &&
+              _visible(e) &&
+              !discarded.contains(e.id) &&
+              (!onlyLiked || liked.contains(e.id)))
+            e
+      ];
+
+  // ------- azioni -------
+  Future<void> _persistSets() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(_prefsKeys.liked, liked.toList());
+    await p.setStringList(_prefsKeys.discarded, discarded.toList());
+    await p.setStringList(
+        _prefsKeys.hiddenSources, disabledSourcesLocal.toList());
+  }
+
+  void swipe(EventItem e, {required bool likedIt}) {
+    (likedIt ? liked : discarded).add(e.id);
+    _persistSets();
+    notifyListeners();
+  }
+
+  void undo(EventItem e) {
+    liked.remove(e.id);
+    discarded.remove(e.id);
+    _persistSets();
+    notifyListeners();
+  }
+
+  void toggleCategory(String c) {
+    activeCategories.contains(c)
+        ? activeCategories.remove(c)
+        : activeCategories.add(c);
+    notifyListeners();
+  }
+
+  void toggleSourceLocal(String id) {
+    disabledSourcesLocal.contains(id)
+        ? disabledSourcesLocal.remove(id)
+        : disabledSourcesLocal.add(id);
+    _persistSets();
+    notifyListeners();
+  }
+}
