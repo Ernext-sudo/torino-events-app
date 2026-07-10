@@ -19,7 +19,6 @@ Future<void> main() async {
   );
 }
 
-/// Palette "Torino di notte": blu profondo + giallo del gonfalone.
 const kBg = Color(0xFF0C1220);
 const kSurface = Color(0xFF16203A);
 const kAccent = Color(0xFFFCA311);
@@ -40,10 +39,7 @@ class TorinoEventsApp extends StatelessWidget {
           surface: kSurface,
         ),
         scaffoldBackgroundColor: kBg,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: kBg,
-          centerTitle: false,
-        ),
+        appBarTheme: const AppBarTheme(backgroundColor: kBg, centerTitle: false),
         navigationBarTheme: NavigationBarThemeData(
           backgroundColor: kSurface,
           indicatorColor: kAccent.withOpacity(.25),
@@ -56,7 +52,6 @@ class TorinoEventsApp extends StatelessWidget {
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
-
   @override
   State<HomeShell> createState() => _HomeShellState();
 }
@@ -72,6 +67,18 @@ class _HomeShellState extends State<HomeShell> {
         title: Text(['Scopri', 'Calendario', 'Fonti'][_tab],
             style: const TextStyle(fontWeight: FontWeight.w700)),
         actions: [
+          // Icona finestra temporale — solo tab Scopri
+          if (_tab == 0)
+            IconButton(
+              tooltip: 'Periodo',
+              icon: Badge(
+                isLabelVisible: state.dateWindow != DateWindow.tutti,
+                label: const Text('!'),
+                child: const Icon(Icons.calendar_today_outlined),
+              ),
+              onPressed: () => _showDateWindowSheet(context),
+            ),
+          // Icona filtro categorie — tab Scopri e Calendario
           if (_tab < 2)
             IconButton(
               tooltip: 'Filtra categorie',
@@ -118,6 +125,41 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  void _showDateWindowSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kSurface,
+      builder: (_) => Consumer<AppState>(
+        builder: (context, state, __) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Periodo', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 12),
+                for (final w in DateWindow.values)
+                  RadioListTile<DateWindow>(
+                    dense: true,
+                    title: Text(w.label),
+                    value: w,
+                    groupValue: state.dateWindow,
+                    activeColor: kAccent,
+                    onChanged: (v) {
+                      if (v != null) state.setDateWindow(v);
+                      Navigator.pop(context);
+                    },
+                  ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showFilterSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -133,8 +175,7 @@ class _HomeShellState extends State<HomeShell> {
                 Row(
                   children: [
                     const Text('Categorie',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.w700)),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                     const Spacer(),
                     if (state.activeCategories.isNotEmpty)
                       TextButton(
