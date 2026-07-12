@@ -25,11 +25,15 @@ String categoryLabel(String c) =>
 /// Deve restare allineato al dict PARSERS di scraper/main.py.
 const sourceTypes = <String, String>{
   'rss': 'RSS generico',
+  'squarespace': 'Squarespace (?format=json)',
   'gancio': 'Gancio (gancio.cisti.org)',
+  'turinhub': 'TurinHub (Google Sheet)',
   'xceed': 'Xceed (JSON-LD)',
   'html_guidatorino': 'GuidaTorino (HTML)',
   'html_torinotoday': 'TorinoToday (HTML)',
   'html_bunker': 'Bunker (HTML)',
+  'html_bobobo': 'Bobobo (HTML)',
+  'html_magazzinosulpo': 'Magazzino sul Po (HTML)',
 };
 
 String sourceTypeLabel(String t) => sourceTypes[t] ?? t;
