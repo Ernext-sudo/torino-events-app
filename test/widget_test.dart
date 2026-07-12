@@ -95,6 +95,22 @@ void main() {
     }
   });
 
+  group('copertine', () {
+    test('le immagini passano dal proxy CORS', () {
+      final url = eventImageUrl(
+          'https://www.guidatorino.com/wp-content/uploads/2026/01/onde.jpg');
+
+      expect(url, startsWith('https://wsrv.nl/?url='));
+      // l'originale va codificato, altrimenti i suoi ? e & rompono la query
+      expect(url, contains(Uri.encodeComponent(
+          'https://www.guidatorino.com/wp-content/uploads/2026/01/onde.jpg')));
+    });
+
+    test('un evento senza copertina non produce un URL di proxy', () {
+      expect(eventImageUrl(''), '');
+    });
+  });
+
   // ── mazzo: rimanda (swipe sinistra) vs scarta (swipe giù) ────────────────
   group('mazzo', () {
     AppState treEventi() => stateWith([

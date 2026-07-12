@@ -35,7 +35,7 @@ class EventDetailScreen extends StatelessWidget {
         padding: EdgeInsets.zero,
         children: [
           if (event.image.isNotEmpty)
-            Image.network(event.image,
+            Image.network(eventImageUrl(event.image, width: 1000),
                 height: 200,
                 width: double.infinity,
                 fit: BoxFit.cover,

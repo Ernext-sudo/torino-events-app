@@ -38,6 +38,21 @@ const sourceTypes = <String, String>{
 
 String sourceTypeLabel(String t) => sourceTypes[t] ?? t;
 
+/// URL da cui caricare davvero la copertina di un evento.
+///
+/// Le fonti servono le immagini senza header CORS (guidatorino.com non manda
+/// alcun Access-Control-Allow-Origin, e non è l'unica). Su Flutter Web con
+/// CanvasKit l'immagine viene scaricata via fetch, non con un tag <img>:
+/// senza CORS il caricamento fallisce e resta solo il placeholder colorato.
+///
+/// Le facciamo passare da wsrv.nl, che aggiunge `Access-Control-Allow-Origin: *`
+/// e in più ridimensiona e converte in webp, quindi la card carica anche meno.
+String eventImageUrl(String raw, {int width = 800}) {
+  if (raw.isEmpty || !raw.startsWith('http')) return raw;
+  return 'https://wsrv.nl/?url=${Uri.encodeComponent(raw)}'
+      '&w=$width&output=webp&q=80';
+}
+
 class EventItem {
   final String id;
   final String title;

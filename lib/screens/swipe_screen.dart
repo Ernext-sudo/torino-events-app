@@ -143,8 +143,11 @@ class _EventCard extends StatelessWidget {
             Expanded(
               flex: 5,
               child: event.image.isNotEmpty
-                  ? Image.network(event.image, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _placeholder(color))
+                  ? Image.network(eventImageUrl(event.image, width: 800),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _placeholder(color),
+                      loadingBuilder: (_, child, progress) =>
+                          progress == null ? child : _placeholder(color))
                   : _placeholder(color),
             ),
             Expanded(
