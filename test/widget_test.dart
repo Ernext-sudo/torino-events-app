@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:torino_events/models/models.dart';
 import 'package:torino_events/services/app_state.dart';
 
@@ -12,6 +13,11 @@ EventItem _ev(String id, DateTime? start) => EventItem(
 DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
 
 void main() {
+  // swipe()/undo() persistono su SharedPreferences: senza binding e mock il
+  // plugin non è disponibile e i test falliscono prima di arrivare alla logica.
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   final today = _day(DateTime.now());
   final tomorrow = today.add(const Duration(days: 1));
 
@@ -87,5 +93,73 @@ void main() {
       final s = stateWith([_ev('senza_data', null)], w);
       expect(ids(s), isEmpty, reason: 'finestra $w');
     }
+  });
+
+  // ── mazzo: rimanda (swipe sinistra) vs scarta (swipe giù) ────────────────
+  group('mazzo', () {
+    AppState treEventi() => stateWith([
+          _ev('a', today),
+          _ev('b', today),
+          _ev('c', today),
+        ], DateWindow.tutti);
+
+    test('rimandare sposta la carta in fondo, non la elimina', () {
+      final s = treEventi();
+      s.defer(s.deck.first); // rimanda "a"
+
+      expect(ids(s), ['b', 'c', 'a']);
+    });
+
+    test('una carta rimandata si ripresenta anche se è rimasta l\'unica', () {
+      final s = stateWith([_ev('solo', today)], DateWindow.tutti);
+      s.defer(s.deck.first);
+
+      expect(ids(s), ['solo']);
+      // il mazzo non cambia lunghezza: è deckRevision a dire alla UI di
+      // ricostruire il CardSwiper, altrimenti resterebbe una schermata vuota
+      expect(s.deckRevision, 1);
+    });
+
+    test('scartare toglie la carta dal mazzo per sempre', () {
+      final s = treEventi();
+      s.swipe(s.deck.first, likedIt: false); // scarta "a"
+
+      expect(ids(s), ['b', 'c']);
+      expect(s.discarded, contains('a'));
+    });
+
+    test('salvare toglie la carta dal mazzo', () {
+      final s = treEventi();
+      s.swipe(s.deck.first, likedIt: true);
+
+      expect(ids(s), ['b', 'c']);
+      expect(s.likedEvents.map((e) => e.id), ['a']);
+    });
+
+    test('rimandare due volte la stessa carta la rimette in ultima posizione', () {
+      final s = treEventi();
+      s.defer(s.deck.first); // a -> in fondo:  b c a
+      s.defer(s.deck.first); // b -> in fondo:  c a b
+
+      expect(ids(s), ['c', 'a', 'b']);
+    });
+
+    test('una carta rimandata può poi essere scartata e sparisce', () {
+      final s = treEventi();
+      s.defer(s.deck.first); // b c a
+      s.swipe(s.deck.last, likedIt: false); // scarta "a"
+
+      expect(ids(s), ['b', 'c']);
+      expect(s.deferred, isNot(contains('a')));
+    });
+
+    test('scorrendo tutto il mazzo di rimandi si torna alla prima carta', () {
+      final s = treEventi();
+      for (var i = 0; i < 3; i++) {
+        s.defer(s.deck.first);
+      }
+      // rimandate tutte e tre nell'ordine a, b, c: il mazzo si ripresenta uguale
+      expect(ids(s), ['a', 'b', 'c']);
+    });
   });
 }

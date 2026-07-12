@@ -45,6 +45,17 @@ class AppState extends ChangeNotifier {
 
   final Set<String> liked = {};
   final Set<String> discarded = {};
+
+  /// Eventi rimandati (swipe a sinistra): restano nel mazzo, in coda, e si
+  /// ripresentano. Lista e non Set perché l'ordine di rinvio è l'ordine in cui
+  /// torneranno. Volutamente NON persistita: è uno stato di sessione, alla
+  /// riapertura il mazzo torna nell'ordine naturale.
+  final List<String> deferred = [];
+
+  /// Cambia a ogni azione sul mazzo. Serve alla tab Scopri per ricostruire il
+  /// CardSwiper: se resta un solo evento e lo si rimanda, la lista di id non
+  /// cambia e senza questo il widget non si accorgerebbe di nulla.
+  int deckRevision = 0;
   final Set<String> activeCategories = {};
   final Set<String> disabledSourcesLocal = {};
 
@@ -171,10 +182,23 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
-  List<EventItem> get deck => [
-        for (final e in events)
-          if (_visible(e) && !liked.contains(e.id) && !discarded.contains(e.id)) e
-      ];
+  /// Il mazzo: prima gli eventi non ancora visti, poi in coda quelli rimandati
+  /// (swipe a sinistra), nell'ordine in cui sono stati rimandati. Un evento
+  /// rimandato si ripresenta; solo lo scarto (swipe in giù) lo toglie di mezzo.
+  List<EventItem> get deck {
+    final nuovi = <EventItem>[];
+    final rimandati = <EventItem>[];
+    for (final e in events) {
+      if (!_visible(e) || liked.contains(e.id) || discarded.contains(e.id)) {
+        continue;
+      }
+      (deferred.contains(e.id) ? rimandati : nuovi).add(e);
+    }
+    // in coda nell'ordine di rinvio, non in quello di events
+    rimandati.sort((a, b) =>
+        deferred.indexOf(a.id).compareTo(deferred.indexOf(b.id)));
+    return [...nuovi, ...rimandati];
+  }
 
   List<EventItem> get likedEvents =>
       [for (final e in events) if (liked.contains(e.id)) e];
@@ -201,13 +225,26 @@ class AppState extends ChangeNotifier {
 
   void swipe(EventItem e, {required bool likedIt}) {
     (likedIt ? liked : discarded).add(e.id);
+    deferred.remove(e.id);
+    deckRevision++;
     _persistSets();
+    notifyListeners();
+  }
+
+  /// Rimanda l'evento in fondo al mazzo: si ripresenterà.
+  void defer(EventItem e) {
+    deferred
+      ..remove(e.id) // se era già stato rimandato, torna in ultima posizione
+      ..add(e.id);
+    deckRevision++;
     notifyListeners();
   }
 
   void undo(EventItem e) {
     liked.remove(e.id);
     discarded.remove(e.id);
+    deferred.remove(e.id);
+    deckRevision++;
     _persistSets();
     notifyListeners();
   }

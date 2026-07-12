@@ -46,17 +46,27 @@ class _SwipeScreenState extends State<SwipeScreen> {
         Expanded(
           child: CardSwiper(
             controller: _controller,
-            // key forza il rebuild quando il mazzo cambia (filtri/refresh)
-            key: ValueKey(deck.map((e) => e.id).join()),
+            // key forza il rebuild quando il mazzo cambia (filtri/refresh) o
+            // quando viene rimandata una carta senza che il mazzo si accorci
+            key: ValueKey('${state.deckRevision}|${deck.map((e) => e.id).join()}'),
             cardsCount: deck.length,
             numberOfCardsDisplayed: deck.length < 3 ? deck.length : 3,
             isLoop: false,
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            allowedSwipeDirection:
-                const AllowedSwipeDirection.only(left: true, right: true),
+            allowedSwipeDirection: const AllowedSwipeDirection.only(
+                left: true, right: true, down: true),
             onSwipe: (prev, _, direction) {
-              state.swipe(deck[prev],
-                  likedIt: direction == CardSwiperDirection.right);
+              final event = deck[prev];
+              switch (direction) {
+                case CardSwiperDirection.right:
+                  state.swipe(event, likedIt: true);
+                case CardSwiperDirection.bottom:
+                  state.swipe(event, likedIt: false); // scarta per sempre
+                case CardSwiperDirection.left:
+                  state.defer(event); // rimanda in fondo al mazzo
+                default:
+                  return false;
+              }
               return true;
             },
             cardBuilder: (context, i, __, ___) => _EventCard(event: deck[i]),
@@ -68,13 +78,22 @@ class _SwipeScreenState extends State<SwipeScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _RoundBtn(
-                icon: Icons.close,
-                color: Colors.redAccent,
+                icon: Icons.history,
+                tooltip: 'Rimanda — torna in fondo al mazzo',
+                color: Colors.amberAccent,
                 onTap: () => _controller.swipe(CardSwiperDirection.left),
               ),
-              const SizedBox(width: 24),
+              const SizedBox(width: 16),
+              _RoundBtn(
+                icon: Icons.arrow_downward,
+                tooltip: 'Scarta — non lo rivedrai più',
+                color: Colors.redAccent,
+                onTap: () => _controller.swipe(CardSwiperDirection.bottom),
+              ),
+              const SizedBox(width: 16),
               _RoundBtn(
                 icon: Icons.info_outline,
+                tooltip: 'Dettagli',
                 color: Colors.white70,
                 small: true,
                 onTap: () => Navigator.push(
@@ -83,9 +102,10 @@ class _SwipeScreenState extends State<SwipeScreen> {
                       builder: (_) => EventDetailScreen(event: deck.first)),
                 ),
               ),
-              const SizedBox(width: 24),
+              const SizedBox(width: 16),
               _RoundBtn(
                 icon: Icons.favorite,
+                tooltip: 'Salva',
                 color: Colors.greenAccent,
                 onTap: () => _controller.swipe(CardSwiperDirection.right),
               ),
@@ -223,26 +243,31 @@ class _RoundBtn extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
+  final String tooltip;
   final bool small;
   const _RoundBtn(
       {required this.icon,
       required this.color,
       required this.onTap,
+      required this.tooltip,
       this.small = false});
 
   @override
-  Widget build(BuildContext context) => InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Container(
-          width: small ? 44 : 60,
-          height: small ? 44 : 60,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xFF16203A),
-            border: Border.all(color: color.withOpacity(.6), width: 2),
+  Widget build(BuildContext context) => Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Container(
+            width: small ? 44 : 56,
+            height: small ? 44 : 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF16203A),
+              border: Border.all(color: color.withOpacity(.6), width: 2),
+            ),
+            child: Icon(icon, color: color, size: small ? 20 : 26),
           ),
-          child: Icon(icon, color: color, size: small ? 20 : 28),
         ),
       );
 }
