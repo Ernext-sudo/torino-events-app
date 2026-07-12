@@ -26,8 +26,10 @@ String categoryLabel(String c) =>
 const sourceTypes = <String, String>{
   'rss': 'RSS generico',
   'gancio': 'Gancio (gancio.cisti.org)',
-  'xceed': 'Xceed (API)',
+  'xceed': 'Xceed (JSON-LD)',
   'html_guidatorino': 'GuidaTorino (HTML)',
+  'html_torinotoday': 'TorinoToday (HTML)',
+  'html_bunker': 'Bunker (HTML)',
 };
 
 String sourceTypeLabel(String t) => sourceTypes[t] ?? t;
